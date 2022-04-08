@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from threading import Timer, Thread, main_thread
 from sys import exit
 from json import loads
+from json.decoder import JSONDecodeError
 from inotify.adapters import Inotify
 from _thread import interrupt_main
 import socket
@@ -140,6 +141,8 @@ def write_to_db():
             # Sending KeyboardInterrupt to main thread
             interrupt_main()
             break
+        except JSONDecodeError as json_error:
+            logger.error('Could not decode JSON, ignoring this update: {}'.format(str(json_error)))
     logger.debug('Wrote {} points to DB'.format(write_counter))
     data_file.close()
 
