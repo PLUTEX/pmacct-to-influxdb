@@ -145,7 +145,7 @@ if __name__ == '__main__':
     load_asn_to_names()
     try:
         # Starting inotify watcher thread
-        watcher = Thread(target=watch_prefix_file, name='prefix_file_watcher', args=(bytes(_PMACCT_DATA, 'utf-8'),))
+        watcher = Thread(target=watch_prefix_file, name='prefix_file_watcher', args=(_PMACCT_DATA,))
         watcher.start()
         while main_thread().is_alive():
             current_time = datetime.today()
