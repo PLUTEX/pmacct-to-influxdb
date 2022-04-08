@@ -38,73 +38,31 @@ _PMACCT_DATA = 'global_asn_traffic.txt'
 # ASN to names data file
 _ASN_TO_NAMES = 'asn_to_names.txt'
 
+ASN_TO_NAMES = None
 
-def check_whois(asn):
-    """ For given AS number function returns data related to AS from CYMRU whois server, for example:
-    "ALCORT", "ES"
-    If there's no data received "_unknown_" and "00" are passed as as-name and as-country.
-    In case of connection problem function returns None, None as calling function expects two parameters.
+
+def load_asn_to_names():
+    """ Return ASN to AS name and AS country mapping
+    On first call, this mapping is loaded from _ASN_TO_NAMES into RAM.
     """
-    asn_request = 'AS{}\n'.format(asn)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect(('v4.whois.cymru.com', 43))
-    except socket.timeout:
-        logger.error('Could not connect to whois server, ignoring entry for AS{}'.format(asn))
-        return None, None
-    except socket.gaierror:
-        logger.error('Could not resolve whois server name, ignoring entry for AS{}'.format(asn))
-        return None, None
-    # From python 3.3 all socket errors raise OSError or one of its subclasses
-    # https://docs.python.org/3/library/socket.html
-    except OSError:
-        logger.error('Whois server connection problem, ignoring entry for AS{}'.format(asn))
-        return None, None
-    else:
-        try:
-            sock.send(asn_request.encode())
-            data = sock.recv(4096)
-            logger.debug("Received message from whois server for asn {} : {}".format(asn, data))
-            if data:
-                decoded_data = data.decode().split('\n')[1]
-                asn_name = decoded_data[:-4]
-                asn_country = decoded_data[-2:]
-                # Sometimes as-name parameter is not defined ans whois returns empty string for it
-                if asn_name == '':
-                    asn_name = '_unspecified_'
-                # Whois as-name: object can be really long, cutting to just want first word for clarity
-                else:
-                    asn_name = asn_name.split()[0]
-            else:
-                return '_unknown_', '00'
-            return asn_name, asn_country
-        except ConnectionResetError:
-            logger.error("Whois connection reset, probably peer closed connection")
-            return None, None
-    finally:
-        sock.close()
+    global ASN_TO_NAMES
+    if ASN_TO_NAMES is None:
+        with open(_ASN_TO_NAMES) as asn_file:
+            ASN_TO_NAMES = {
+                int(x[0]): (x[1], x[2])
+                for x in (line.rstrip('\n').split('\t') for line in asn_file)
+            }
+    return ASN_TO_NAMES
 
 
-def asn_to_name(asn):
-    """ Function is searching _ASN_TO_NAMES file for ASN data. If there's no match, check_whois(asn) is called.
-    If returned values are None, None is returned as well. Otherwise list [asn_country, asn_name] is passed as output.
-    """
-    asn_file = open(_ASN_TO_NAMES, 'a+')
-    # File is opened in append mode, we need to move back to beginning
-    asn_file.seek(0)
-    for line in asn_file.readlines():
-        if int(line.split()[0]) == asn:
-            return [line.split()[1], line[20:-1]]
-
-    # If ASN data is not found in cache file
-    asn_name, asn_country = check_whois(asn)
-    if not asn_name and not asn_country:
-        return None
-    # Writing missing ASN data to file
-    asn_file.write('{:<10}{:<10}{}\n'.format(asn, asn_country, asn_name))
-    logger.debug('Added to ASN file: {} ({}) {}'.format(asn, asn_country, asn_name))
-    asn_file.close()
-    return [asn_country, asn_name]
+def format_asn(asn):
+    """ Nicely format AS number, name and country """
+    asn_list = load_asn_to_names().get(asn) or ('XX', 'UNKNOWN')
+    return 'AS{} {} ({})'.format(
+        asn,
+        asn_list[1],
+        asn_list[0],
+    )
 
 
 def write_to_db():
@@ -123,14 +81,9 @@ def write_to_db():
     for line in data_file.readlines():
         # Parsing JSON to dictionary
         line_dict = loads(line)
-        # Expecting two element list [asn_country, asn_name]
-        asn_list = asn_to_name(line_dict['as_dst'])
-        if not asn_list:
-            continue
         try:
             db_client.write_points([{"measurement": _TRAFFIC_MEASUREMENT,
-                                     "tags": {'ASN': 'AS{} {} ({})'.format(line_dict['as_dst'], asn_list[1],
-                                                                           asn_list[0])},
+                                     "tags": {'ASN': format_asn(line_dict['as_dst'])},
                                      "fields": {'bytes': line_dict['bytes']}}])
             write_counter += 1
         except (exceptions.InfluxDBClientError, exceptions.InfluxDBServerError) as db_error:
@@ -191,6 +144,7 @@ def clear_top_talkers_measurement():
 
 
 if __name__ == '__main__':
+    load_asn_to_names()
     try:
         # Starting inotify watcher thread
         watcher = Thread(target=watch_prefix_file, name='prefix_file_watcher', args=(bytes(_PMACCT_DATA, 'utf-8'),))
