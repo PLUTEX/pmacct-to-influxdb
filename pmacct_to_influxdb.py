@@ -80,7 +80,10 @@ def write_to_db():
         try:
             db_client.write_points([
                     {"measurement": _TRAFFIC_MEASUREMENT,
-                     "tags": {'ASN': format_asn(line_dict['as_dst'])},
+                     "tags": {'as_dst': format_asn(line_dict['as_dst']),
+                              'asn_dst': line_dict['as_dst'],
+                              'as_src': format_asn(line_dict['as_src']),
+                              'asn_src': line_dict['as_src']},
                      "fields": {'bytes': line_dict['bytes'], 'packets': line_dict['packets']}}
                     for line_dict in (loads(line) for line in data_file)],
                     batch_size=1000)
