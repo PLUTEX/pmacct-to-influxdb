@@ -1,4 +1,5 @@
-from influxdb import InfluxDBClient, exceptions
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.exceptions import InfluxDBError
 from datetime import datetime, timedelta
 from threading import Timer, Thread, main_thread
 from sys import exit
@@ -18,11 +19,10 @@ logger.setLevel(logging.ERROR)
 
 
 # InfluxDB connection data
-_INFLUX_HOST = 'x.x.x.x'
-_INFLUX_PORT = 8086
-_INFLUX_USERNAME = '_username_'
-_INFLUX_PASSWORD = '_password_'
-_INFLUX_DATABASE = 'sflow_global_traffic'
+_INFLUX_URL = 'http://x.x.x.x:8086'
+_INFLUX_TOKEN = '_token_'
+_INFLUX_ORG = '_org_'
+_INFLUX_BUCKET = 'sflow_global_traffic'
 
 
 # InfluxDB measurements for pmacct data
@@ -75,27 +75,37 @@ def write_to_db():
         for ASN 2856 "AS2856 BT-UK-AS (GB)"
         If any client or server side error occurs proper log entry is created and script exits all threads.
     """
-    db_client = InfluxDBClient(_INFLUX_HOST, _INFLUX_PORT, _INFLUX_USERNAME, _INFLUX_PASSWORD, _INFLUX_DATABASE)
-    with open(_PMACCT_DATA) as data_file:
-        try:
-            db_client.write_points([
-                    {"measurement": _TRAFFIC_MEASUREMENT,
-                     "tags": {'as_dst': format_asn(line_dict['as_dst']),
-                              'asn_dst': line_dict['as_dst'],
-                              'as_src': format_asn(line_dict['as_src']),
-                              'asn_src': line_dict['as_src']},
-                     "fields": {'bytes': line_dict['bytes'], 'packets': line_dict['packets']}}
-                    for line_dict in (loads(line) for line in data_file)],
-                    batch_size=1000)
-        except (exceptions.InfluxDBClientError, exceptions.InfluxDBServerError) as db_error:
-            logger.error('Could not write point to DB: {}'.format(str(db_error)[:-1]))
-            logger.error('Exiting...')
-            # Canceling Timer thread
-            timer_obj.cancel()
-            # Sending KeyboardInterrupt to main thread
-            interrupt_main()
-        except JSONDecodeError as json_error:
-            logger.error('Could not decode JSON, ignoring this update: {}'.format(str(json_error)))
+    with InfluxDBClient(
+        url=_INFLUX_URL,
+        token=_INFLUX_TOKEN,
+        org=_INFLUX_ORG,
+    ) as db_client:
+        with db_client.write_api() as write_api:
+            with open(_PMACCT_DATA) as data_file:
+                for line in data_file:
+                    try:
+                        line_dict = loads(line)
+                    except JSONDecodeError as json_error:
+                        logger.error('Could not decode JSON, ignoring this line: {}'.format(str(json_error)))
+                        continue
+                    try:
+                        write_api.write(
+                            bucket=_INFLUX_BUCKET,
+                            record=Point(_TRAFFIC_MEASUREMENT)
+                                .tag("as_dst", format_asn(line_dict['as_dst']))
+                                .tag('asn_dst', line_dict['as_dst'])
+                                .tag('as_src', format_asn(line_dict['as_src']))
+                                .tag('asn_src', line_dict['as_src'])
+                                .field('bytes', line_dict['bytes'])
+                                .field('packets', line_dict['packets']),
+                        )
+                    except InfluxDBError as db_error:
+                        logger.error('Could not write point to DB: {}'.format(str(db_error)[:-1]))
+                        logger.error('Exiting...')
+                        # Canceling Timer thread
+                        timer_obj.cancel()
+                        # Sending KeyboardInterrupt to main thread
+                        interrupt_main()
 
 
 def watch_prefix_file(file_name):
