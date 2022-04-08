@@ -76,16 +76,14 @@ def write_to_db():
         If any client or server side error occurs proper log entry is created and script exits all threads.
     """
     db_client = InfluxDBClient(_INFLUX_HOST, _INFLUX_PORT, _INFLUX_USERNAME, _INFLUX_PASSWORD, _INFLUX_DATABASE)
-    data_file = open(_PMACCT_DATA)
-    write_counter = 0
-    for line in data_file.readlines():
-        # Parsing JSON to dictionary
-        line_dict = loads(line)
+    with open(_PMACCT_DATA) as data_file:
         try:
-            db_client.write_points([{"measurement": _TRAFFIC_MEASUREMENT,
-                                     "tags": {'ASN': format_asn(line_dict['as_dst'])},
-                                     "fields": {'bytes': line_dict['bytes']}}])
-            write_counter += 1
+            db_client.write_points([
+                    {"measurement": _TRAFFIC_MEASUREMENT,
+                     "tags": {'ASN': format_asn(line_dict['as_dst'])},
+                     "fields": {'bytes': line_dict['bytes'], 'packets': line_dict['packets']}}
+                    for line_dict in (loads(line) for line in data_file)],
+                    batch_size=1000)
         except (exceptions.InfluxDBClientError, exceptions.InfluxDBServerError) as db_error:
             logger.error('Could not write point to DB: {}'.format(str(db_error)[:-1]))
             logger.error('Exiting...')
@@ -93,11 +91,8 @@ def write_to_db():
             timer_obj.cancel()
             # Sending KeyboardInterrupt to main thread
             interrupt_main()
-            break
         except JSONDecodeError as json_error:
             logger.error('Could not decode JSON, ignoring this update: {}'.format(str(json_error)))
-    logger.debug('Wrote {} points to DB'.format(write_counter))
-    data_file.close()
 
 
 def watch_prefix_file(file_name):
