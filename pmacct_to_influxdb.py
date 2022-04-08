@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.exceptions import InfluxDBError
 from datetime import datetime, timedelta
